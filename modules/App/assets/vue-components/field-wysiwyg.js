@@ -1,8 +1,12 @@
 let ready = new Promise(function(resolve) {
 
     App.assets.require([
-        'app:assets/vendor/tinymce/tinymce.min.js'
+        'app:assets/vendor/strute/strute.js',
+        'app:assets/vendor/tinymce/tinymce.min.js',
     ], function() {
+
+        STRUTE.scriptPath = App.base('app:assets/vendor/strute');
+
         resolve(window.tinymce);
     });
 });
@@ -21,11 +25,31 @@ export default {
                 return value.length ? `${value.length}x...` : '';
             }
 
+            if (field && field.opts && field.opts.structuredText) {
+
+                const uuid = crypto.randomUUID();
+
+                ready.then(() => {
+
+                    STRUTE.asyncJsonToHtml(value).then(html => {
+
+                        const ele = document.getElementById(uuid);
+
+                        if (ele && typeof(html) === 'string') {
+                            ele.innerText = App.utils.truncate(App.utils.stripTags(html || ''), context == 'table-cell' ? 20 : 50);
+                        }
+                    });
+                });
+
+                return `<div id="${uuid}"><app-loader class="kiss-display-inline-block" size="small" mode="dots"></app-loader></div>`;
+            }
+
             return value ? App.utils.truncate(App.utils.stripTags(value), context == 'table-cell' ? 20 : 50) : '';
         }
     },
 
     data() {
+
         return {
             id: ++instanceCount
         }
@@ -33,20 +57,34 @@ export default {
 
     props: {
         modelValue: {
-            type: String,
             default: false
         },
 
         tinymce: {
             type: Object,
             default: {}
+        },
+
+        structuredText: {
+            type: Boolean,
+            default: false
         }
     },
 
     watch: {
         modelValue() {
+
             if (this.editor && !this.editor.isFocused) {
-                this.editor.setContent(this.modelValue || '');
+
+                if (this.structuredText && typeof(this.modelValue) !== 'string') {
+
+                    STRUTE.asyncJsonToHtml(this.modelValue).then(html => {
+                        this.editor.setContent(html || '');
+                    });
+
+                } else {
+                    this.editor.setContent(this.modelValue || '');
+                }
             }
         }
     },
@@ -72,10 +110,14 @@ export default {
                     'insertdatetime media table code wordcount'
                 ].join(' '),
                 toolbar: [
-                    'undo redo | blocks',
-                    'bold italic | alignleft aligncenter',
-                    'alignright alignjustify | bullist numlist outdent indent',
-                    'removeformat | hr image link table'
+
+                    'undo redo | bold italic underline | bullist numlist | link',
+
+                    // kitchen sink
+                    // 'undo redo | blocks',
+                    // 'bold italic | alignleft aligncenter',
+                    // 'alignright alignjustify | bullist numlist outdent indent',
+                    // 'removeformat | hr image link table'
                 ].join(' | '),
 
                 height: 400,
@@ -102,10 +144,34 @@ export default {
 
                 editor.on('init', e => {
 
-                    editor.setContent(this.modelValue || '');
+                    let initialized = true;
+
+                    if (this.structuredText && typeof(this.modelValue) !== 'string') {
+
+                        initialized = false;
+
+                        STRUTE.asyncJsonToHtml(this.modelValue).then(html => {
+                            initialized = true;
+                            editor.setContent(html || '');
+                        });
+
+                    } else {
+                        editor.setContent(this.modelValue || '');
+                    }
 
                     editor.on('change input undo redo ExecCommand', e => {
-                        this.$emit('update:modelValue', editor.getContent())
+
+                        if (!initialized) return;
+
+                        if (this.structuredText) {
+
+                            STRUTE.asyncHtmlToJson(this.editor.getContent()).then(doc => {
+                                this.update(doc);
+                            });
+
+                        } else {
+                            this.update(editor.getContent());
+                        }
                     });
 
                     editor.on('focus blur input', e => {
@@ -141,8 +207,8 @@ export default {
     },
 
     methods: {
-        update() {
-            this.$emit('update:modelValue', this.editor.getContent())
+        update(contents) {
+            this.$emit('update:modelValue', contents);
         }
     },
 
